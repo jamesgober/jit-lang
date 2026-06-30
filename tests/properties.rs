@@ -66,7 +66,8 @@ fn reference(prog: &IntProgram) -> i64 {
         let value = f(pool[a % len], pool[b % len]);
         pool.push(value);
     }
-    *pool.last().expect("the pool always holds at least one value")
+    // The pool always holds at least one value: one per parameter, and nparams >= 1.
+    pool[pool.len() - 1]
 }
 
 /// Builds the program as IR, compiles it, and runs the native code with its inputs.
@@ -82,7 +83,8 @@ fn jit(prog: &IntProgram) -> i64 {
         let value = b.bin(op, pool[a % len], pool[b_idx % len]);
         pool.push(value);
     }
-    let result = *pool.last().expect("the pool always holds at least one value");
+    // The pool always holds at least one value: one per parameter, and nparams >= 1.
+    let result = pool[pool.len() - 1];
     b.ret(Some(result));
 
     let compiled = compile(&b.finish()).expect("a generated function is well-formed");
