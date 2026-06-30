@@ -3,10 +3,12 @@
 # =============================================================================
 [package]
 name    = "jit-lang"
-version = "0.1.0"
+version = "0.2.0"
 
-# Minimum Supported Rust Version (MSRV)
-rust-version = "1.85"
+# Minimum Supported Rust Version (MSRV).
+# Raised from the collection's 1.85 baseline because the native code generator
+# (cranelift-codegen 0.133) requires 1.94. This is the floor the dependency imposes.
+rust-version = "1.94"
 edition = "2024"
 
 # License
@@ -19,10 +21,10 @@ readme = "README.md"
 description = "Lower IR to machine code in executable memory and run it now."
 
 # Keywords (5 max)
-keywords = [compiler,jit,language,cranelift]
+keywords = ["jit", "compiler", "cranelift", "codegen", "language"]
 
 # Categories
-categories = [development-tools,compilers]
+categories = ["development-tools", "compilers"]
 
 # Links
 homepage      = "https://github.com/jamesgober/jit-lang"
@@ -41,19 +43,24 @@ name = "jit_lang"
 path = "src/lib.rs"
 
 
-# FEATURE FLAGS
-# #################################
-[features]
-default = ["std"]
-std = []
-# Serialization support.
-serde = ["dep:serde"]
-
-
 # DEPENDENCIES
 # #################################
 [dependencies]
-serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+# The intermediate representation this JIT lowers. `Function` is the input to every
+# compile; its frozen 1.0 surface is the only thing the translator reads.
+ir-lang = "1"
+# Executable, page-aligned memory with write-xor-execute protection control. Hosts the
+# emitted machine code so it can be run, in place of rolling our own mmap/VirtualAlloc.
+pager-lang = "1"
+# The native code generator: lowers the CLIF we translate the IR into to optimized
+# machine code for the host, with no C toolchain. The engine the ROADMAP mandates.
+cranelift-codegen = "0.133"
+# The SSA construction helper. `FunctionBuilder` is the interface we translate through,
+# the same shape as ir-lang's own `Builder` that built the source IR.
+cranelift-frontend = "0.133"
+# Host-target detection: builds a `TargetIsa` for the running CPU with its native
+# features enabled, so generated code uses the instructions the host actually has.
+cranelift-native = "0.133"
 
 
 # DEV DEPENDENCIES
@@ -61,9 +68,6 @@ serde = { version = "1", optional = true, default-features = false, features = [
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest  = "1"
-
-[target.'cfg(loom)'.dev-dependencies]
-loom = "0.7"
 
 
 # BENCHMARKS
