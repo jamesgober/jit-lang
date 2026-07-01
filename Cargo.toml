@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "jit-lang"
-version = "0.2.0"
+version = "1.0.0"
 
 # Minimum Supported Rust Version (MSRV).
 # Raised from the collection's 1.85 baseline because the native code generator

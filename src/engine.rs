@@ -11,7 +11,7 @@ use pager_lang::{Protection, Region};
 
 use crate::compiled::Compiled;
 use crate::error::JitError;
-use crate::translate;
+use crate::{icache, translate};
 
 /// A just-in-time compiler for the host machine.
 ///
@@ -211,11 +211,13 @@ fn set_flag(flags: &mut settings::Builder, name: &str, value: &str) -> Result<()
         .map_err(|err| JitError::Codegen(err.to_string()))
 }
 
-/// Copies machine code into a fresh guard-flanked region and flips it to read-execute.
+/// Copies machine code into a fresh guard-flanked region, flips it to read-execute, and
+/// synchronizes the instruction cache so the code is safe to run on any supported host.
 fn place(code: &[u8]) -> Result<Region, JitError> {
     let mut region = Region::with_guard_pages(code.len())?;
     region.write(0, code)?;
     region.protect(Protection::ReadExecute)?;
+    icache::synchronize(region.as_ptr(), code.len());
     Ok(region)
 }
 

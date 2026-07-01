@@ -26,7 +26,7 @@
         <strong>MSRV is 1.94+</strong> (Rust 2024 edition). The native code generator sets this floor; the rest of the family targets 1.85.
     </p>
     <blockquote>
-        <strong>Status: pre-1.0, in active development.</strong> The public API is being settled across the 0.x series and frozen at <code>1.0.0</code>. See <a href="./docs/API.md"><code>docs/API.md</code></a> and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
+        <strong>Status: stable.</strong> The public API is frozen as of <code>1.0.0</code> and follows Semantic Versioning, with no breaking changes before <code>2.0</code>. See <a href="./docs/API.md#semver-promise"><code>docs/API.md</code></a> for the SemVer promise and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
     </blockquote>
 </div>
 
@@ -49,7 +49,7 @@ Under the hood, a validated function is translated to [Cranelift](https://cranel
 
 ```toml
 [dependencies]
-jit-lang = "0.2"
+jit-lang = "1"
 ir-lang = "1"
 ```
 
@@ -245,7 +245,7 @@ The integration suite in [`tests/workflow.rs`](./tests/workflow.rs) compiles rep
 
 ## Cross-Platform Support
 
-Code generation targets the host through Cranelift, and executable memory is managed by pager-lang, so the supported targets are their intersection: **Linux**, **macOS**, and **Windows** on **x86-64** and **ARM64**. The CI matrix builds and tests on Linux, macOS, and Windows on stable and the 1.94 MSRV.
+Code generation targets the host through Cranelift, and executable memory is managed by pager-lang, so the supported targets are their intersection: **Linux**, **macOS**, and **Windows** on **x86-64** and **ARM64**. Freshly written code is made coherent before it runs — a no-op on x86-64, where the instruction and data caches are unified, and an instruction-cache synchronization on ARM64, where they are not. The CI matrix builds and tests on Linux, macOS, and Windows (macOS on ARM64, so the cache path is exercised) on stable and the 1.94 MSRV.
 
 <br>
 

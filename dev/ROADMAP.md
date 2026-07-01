@@ -25,7 +25,16 @@ Decisions recorded here per the anti-deferral rule:
 - Scope held to leaf functions over int/float/bool with a unit return. A unit-typed
   parameter is rejected (no machine representation), not silently lowered.
 
-## v1.0.0 - API freeze
+## v1.0.0 - API freeze (DONE)
 Public surface stable and frozen until 2.0.
-- [ ] docs/API.md marked stable; SemVer promise recorded.
-- [ ] Full test + benchmark suite green on all three platforms.
+- [x] docs/API.md marked stable; SemVer promise recorded.
+- [x] Full test + benchmark suite green on all three platforms (CI matrix covers Linux,
+      macOS on ARM64, and Windows; x86-64 verified locally in WSL2, both ARM64 targets
+      cross-checked to compile).
+
+Frozen 1.0 surface: `Jit` / `Jit::new` / `Jit::compile`, the free `compile`, `Compiled`
+(`name` / `params` / `ret` / `code_len` / `as_ptr` / `unsafe entry::<F>()`), and
+`JitError` (`#[non_exhaustive]`). Hardening at the freeze: ARM64 instruction-cache
+coherence in `place()`, so freshly compiled code runs correctly on aarch64 (x86-64 was
+already coherent). Additive 1.x room: function calls, wider machine types, and more
+back-ends or optimization levels — each a minor release when it lands.

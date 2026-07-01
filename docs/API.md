@@ -14,7 +14,7 @@
 </div>
 <br>
 
-> **Status: pre-1.0 (`0.2.0`).** The surface below is the working API. It is being settled across the 0.x series and frozen at `1.0`; until then a minor release may change it. See [`dev/ROADMAP.md`](../dev/ROADMAP.md) and the [stability note](#stability) below.
+> **Status: stable (1.0).** The surface below is the `1.0` contract: it follows [Semantic Versioning](#semver-promise) and will not change in a breaking way before `2.0`. See [`dev/ROADMAP.md`](../dev/ROADMAP.md).
 
 jit-lang lowers the [`ir-lang`](https://docs.rs/ir-lang) intermediate representation to native machine code, places it in executable memory, and returns a callable handle. It is the run-it-now end of the language-construction pipeline.
 
@@ -34,7 +34,7 @@ jit-lang lowers the [`ir-lang`](https://docs.rs/ir-lang) intermediate representa
   - [`Compiled::entry`](#compiledentry)
   - [`JitError`](#jiterror)
 - [Feature flags](#feature-flags)
-- [Stability](#stability)
+- [SemVer promise](#semver-promise)
 
 <br>
 <hr>
@@ -44,7 +44,7 @@ jit-lang lowers the [`ir-lang`](https://docs.rs/ir-lang) intermediate representa
 
 ```toml
 [dependencies]
-jit-lang = "0.2"
+jit-lang = "1"
 ir-lang = "1"
 ```
 
@@ -64,7 +64,7 @@ A compile is three stages:
 
 1. **Validate.** The function is checked with [`Function::validate`](https://docs.rs/ir-lang). Only well-formed SSA is lowered; a malformed function is rejected with [`JitError::InvalidIr`](#jiterror).
 2. **Translate and generate.** The IR is translated to [Cranelift](https://cranelift.dev) IR — close to a relabeling, since both are SSA control-flow graphs whose values cross blocks as block parameters — and Cranelift generates optimized machine code for the host.
-3. **Place.** The emitted bytes are copied into a guard-flanked region from [`pager-lang`](https://docs.rs/pager-lang) and the region is flipped from writable to read-execute. The functions compiled here are leaf functions with no outgoing calls, so the code is self-contained and needs no runtime relocation; one that somehow did is refused rather than run wrong.
+3. **Place.** The emitted bytes are copied into a guard-flanked region from [`pager-lang`](https://docs.rs/pager-lang), the region is flipped from writable to read-execute, and the instruction cache is synchronized over the new code so it is safe to run — nothing to do on x86-64, an instruction-cache flush on ARM64. The functions compiled here are leaf functions with no outgoing calls, so the code is self-contained and needs no runtime relocation; one that somehow did is refused rather than run wrong.
 
 ### Type and ABI mapping
 
@@ -457,11 +457,14 @@ jit-lang has no feature flags. The JIT is the crate: it always links the standar
 
 <br>
 
-## Stability
+## SemVer promise
 
-jit-lang is **pre-1.0**. The surface in this document is the working API; it is being settled across the 0.x series and will be frozen at `1.0.0`, after which it follows [Semantic Versioning](https://semver.org) — no breaking change before `2.0`. Until then, a minor (`0.x`) release may change it, and each such change is recorded in the [CHANGELOG](../CHANGELOG.md).
+As of `1.0.0` the public surface above is frozen. The crate follows [Semantic Versioning](https://semver.org):
 
-The MSRV is Rust `1.94`, the floor the code generator imposes; raising it is a minor change, never a patch. [`JitError`](#jiterror) is already `#[non_exhaustive]`, so adding a failure variant will stay additive across the `1.0` boundary.
+- No documented item is removed or changed in a breaking way within `1.x`; breaking changes wait for `2.0`.
+- New functionality is additive and arrives in minor releases. [`JitError`](#jiterror) is `#[non_exhaustive]`, so a new failure variant is a minor change, not a breaking one; a `match` on it must keep a wildcard arm.
+- The MSRV is Rust `1.94`, the floor the code generator imposes; raising it is a minor change, never a patch.
+- Behaviour is part of the contract: a function that compiles today keeps compiling, and a compiled function computes the same result on the same inputs. The set of supported host architectures may grow, never shrink.
 
 This file is updated in lockstep with every release so it always matches the code.
 

@@ -93,15 +93,18 @@
 //!
 //! Code generation targets the host through Cranelift, and executable memory is managed
 //! by pager-lang, so the supported targets are their intersection: Linux, macOS, and
-//! Windows on x86-64 and ARM64. The crate links the standard library and reaches the
-//! operating system for memory; it is not `no_std`.
+//! Windows on x86-64 and ARM64. Freshly written code is made coherent before it runs —
+//! nothing to do on x86-64, where the caches are unified, and an instruction-cache
+//! synchronization on ARM64, where they are not. The crate links the standard library
+//! and reaches the operating system for memory; it is not `no_std`.
 //!
 //! ## Stability
 //!
-//! Pre-1.0 and under active development. The public surface — [`Jit`], [`Compiled`],
-//! [`JitError`], and [`compile`] — is being settled across the 0.x series and frozen at
-//! `1.0.0`. See [`docs/API.md`](https://github.com/jamesgober/jit-lang/blob/main/docs/API.md)
-//! and [`dev/ROADMAP.md`](https://github.com/jamesgober/jit-lang/blob/main/dev/ROADMAP.md).
+//! The public surface is frozen and stable as of `1.0.0`: it follows Semantic
+//! Versioning, with no breaking changes before `2.0`. [`JitError`] is
+//! `#[non_exhaustive]`, so a new failure variant is an additive, non-breaking change.
+//! The full surface and the SemVer promise are catalogued in
+//! [`docs/API.md`](https://github.com/jamesgober/jit-lang/blob/main/docs/API.md#semver-promise).
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
@@ -122,6 +125,7 @@
 mod compiled;
 mod engine;
 mod error;
+mod icache;
 mod translate;
 
 pub use compiled::Compiled;

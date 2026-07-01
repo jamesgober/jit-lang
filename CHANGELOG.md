@@ -21,6 +21,21 @@
 
 ---
 
+## [1.0.0] - 2026-06-30
+
+API freeze. The public surface is stable and frozen until `2.0`; the crate follows Semantic Versioning from this release. No breaking change to the `0.2.0` surface.
+
+### Added
+
+- Instruction-cache coherence for freshly compiled code. `place` now synchronizes the instruction cache over the emitted bytes before returning — a no-op on x86-64, where the instruction and data caches are unified, and an instruction-cache flush on ARM64 (`sys_icache_invalidate` on macOS, the compiler runtime's `__clear_cache` elsewhere) — so a compiled function runs correctly on aarch64, not only x86-64.
+- Stability documentation: the crate root, `README`, and `docs/API.md` state the frozen `1.0` surface and the [SemVer promise](./docs/API.md#semver-promise).
+
+### Changed
+
+- The public API — [`Jit`], [`Compiled`], [`JitError`], and [`compile`] — is frozen as of `1.0.0` and follows Semantic Versioning, with no breaking changes before `2.0`.
+
+---
+
 ## [0.2.0] - 2026-06-30
 
 The core release: jit-lang now compiles an `ir-lang` function to native machine code and runs it. This is the hard part of the roadmap, not deferred.
@@ -60,7 +75,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/jit-lang/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jamesgober/jit-lang/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jamesgober/jit-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/jit-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/jit-lang/releases/tag/v0.1.0
 
