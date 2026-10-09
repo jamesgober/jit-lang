@@ -195,8 +195,8 @@ impl Compiled {
     /// The caller guarantees all of the following:
     ///
     /// - `F` is a function-pointer type (so it is pointer-sized, the size of the entry
-    ///   address). Passing a non-function or differently-sized type is undefined
-    ///   behavior.
+    ///   address). Passing a pointer-sized non-function type is undefined behavior; a
+    ///   differently-sized `F` is rejected at compile time (see the last example).
     /// - `F`'s signature matches the compiled function: one `extern "C"` argument per
     ///   entry in [`params`](Self::params) with the ABI type above, and a return that
     ///   matches [`ret`](Self::ret). A mismatch is undefined behavior.
@@ -242,20 +242,39 @@ impl Compiled {
     /// assert!(lt(1, 2));
     /// assert!(!lt(2, 1));
     /// ```
+    ///
+    /// Asking for a type that is not pointer-sized does not compile:
+    ///
+    /// ```compile_fail
+    /// use jit_lang::compile;
+    /// use ir_lang::{Builder, Type};
+    ///
+    /// let mut b = Builder::new("f", &[], Type::Unit);
+    /// b.ret(None);
+    /// let f = compile(&b.finish()).unwrap();
+    ///
+    /// // A 16-byte array is not a function pointer: rejected when `entry` is instantiated.
+    /// let wrong: [u64; 2] = unsafe { f.entry() };
+    /// ```
     #[must_use]
     pub unsafe fn entry<F: Copy>(&self) -> F {
-        debug_assert_eq!(
-            mem::size_of::<F>(),
-            mem::size_of::<*const u8>(),
-            "entry::<F>() requires F to be a pointer-sized function pointer",
-        );
+        // Checked at compile time, per instantiation: an `entry::<F>()` with a `F` that
+        // is not pointer-sized fails to build rather than reading past `ptr` at run
+        // time. This catches the size half of the contract in every build profile; the
+        // "is a function pointer with the right signature" half cannot be checked.
+        const {
+            assert!(
+                mem::size_of::<F>() == mem::size_of::<*const u8>(),
+                "entry::<F>() requires F to be a pointer-sized function pointer",
+            );
+        }
         let ptr = self.as_ptr();
         // SAFETY: `ptr` is the entry address of the compiled function. The caller's
         // `# Safety` contract guarantees `F` is a function-pointer type — hence
         // pointer-sized — whose signature matches the compiled code, so reinterpreting
         // the address as `F` produces a valid, callable pointer. `transmute_copy` reads
         // `size_of::<F>()` bytes from `&ptr`; with `F` pointer-sized that is exactly the
-        // pointer, checked in debug by the assertion above.
+        // pointer, enforced at compile time by the assertion above.
         unsafe { mem::transmute_copy::<*const u8, F>(&ptr) }
     }
 }

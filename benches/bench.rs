@@ -122,6 +122,21 @@ fn bench_call(c: &mut Criterion) {
     c.bench_function("call_compiled", |b| {
         b.iter(|| black_box(neg_abs(black_box(-7))))
     });
+
+    // fn div(a: int, b: int) -> int { a / b } — a runtime divisor, so the zero / minus-one
+    // guard (1.0.1) runs on every call. Compare with `call_compiled` for the call floor.
+    let mut b = Builder::new("div", &[Type::Int, Type::Int], Type::Int);
+    let a = b.block_params(b.entry())[0];
+    let d = b.block_params(b.entry())[1];
+    let q = b.bin(BinOp::Div, a, d);
+    b.ret(Some(q));
+    let compiled_div = jit.compile(&b.finish()).expect("div is well-formed");
+    // SAFETY: the signature is `fn(int, int) -> int` and `compiled_div` outlives the benchmark.
+    let div: extern "C" fn(i64, i64) -> i64 = unsafe { compiled_div.entry() };
+
+    c.bench_function("call_guarded_div", |b| {
+        b.iter(|| black_box(div(black_box(1_000_003), black_box(7))))
+    });
 }
 
 criterion_group!(benches, bench_compile, bench_call);

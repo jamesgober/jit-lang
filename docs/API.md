@@ -25,6 +25,7 @@ jit-lang lowers the [`ir-lang`](https://docs.rs/ir-lang) intermediate representa
 - [Installation](#installation)
 - [How it works](#how-it-works)
   - [Type and ABI mapping](#type-and-abi-mapping)
+  - [Integer arithmetic](#integer-arithmetic)
 - [Public API](#public-api)
   - [`Jit`](#jit)
   - [`Jit::new`](#jitnew)
@@ -64,7 +65,7 @@ A compile is three stages:
 
 1. **Validate.** The function is checked with [`Function::validate`](https://docs.rs/ir-lang). Only well-formed SSA is lowered; a malformed function is rejected with [`JitError::InvalidIr`](#jiterror).
 2. **Translate and generate.** The IR is translated to [Cranelift](https://cranelift.dev) IR — close to a relabeling, since both are SSA control-flow graphs whose values cross blocks as block parameters — and Cranelift generates optimized machine code for the host.
-3. **Place.** The emitted bytes are copied into a guard-flanked region from [`pager-lang`](https://docs.rs/pager-lang), the region is flipped from writable to read-execute, and the instruction cache is synchronized over the new code so it is safe to run — nothing to do on x86-64, an instruction-cache flush on ARM64. The functions compiled here are leaf functions with no outgoing calls, so the code is self-contained and needs no runtime relocation; one that somehow did is refused rather than run wrong.
+3. **Place.** The emitted bytes are copied into a guard-flanked region from [`pager-lang`](https://docs.rs/pager-lang), the region is flipped from writable to read-execute, and the instruction cache is synchronized over the new code so it is safe to run — nothing to do on x86-64, an instruction-cache flush on ARM64 (`sys_icache_invalidate` on macOS, `FlushInstructionCache` on Windows, `__clear_cache` elsewhere). The functions compiled here are leaf functions with no outgoing calls, so the code is self-contained and needs no runtime relocation; one that somehow did is refused rather than run wrong.
 
 ### Type and ABI mapping
 
@@ -74,10 +75,21 @@ The IR's machine types map onto the host C ABI. The compiled function uses the h
 |---|---|---|
 | `int` | 64-bit integer | `i64` |
 | `float` | IEEE-754 double | `f64` |
-| `bool` | a byte that is `0` or `1` | `bool` or `u8` |
+| `bool` | a byte that is `0` or `1`, zero-extended to the full register | `bool` or `u8` |
 | `unit` (as a return type) | no return value | `()` |
 
-A `unit`-typed **parameter** has no machine representation and is refused with [`JitError::Unsupported`](#jiterror). Integer division by zero traps in hardware, as it does on the CPU directly; the compiled code does not guard it.
+A `unit`-typed **parameter** has no machine representation and is refused with [`JitError::Unsupported`](#jiterror).
+
+### Integer arithmetic
+
+Integer arithmetic is total: no compiled function faults on any input. `add`, `sub`, `mul`, and `neg` wrap in two's complement. `div` truncates toward zero, and its two cases a hardware divide would trap on have defined results:
+
+| Case | Result |
+|---|---|
+| `x / 0` (any `x`) | `0` |
+| `i64::MIN / -1` | `i64::MIN` (wraps, as `i64::wrapping_div`) |
+
+`MIN / -1` matches the bytecode tier (codegen-lang's reference interpreter uses `wrapping_div`). Division by zero is not defined by ir-lang 1.0 or the bytecode tier; jit-lang defines it as `0`, the value AArch64's `sdiv` produces. The `1.x` calling convention has no way to return a runtime error, so neither case can be reported as one; erroring semantics (the LexerSketch `OPS` policy defaults) arrive with the native backend that replaces this crate's code generator. Float division follows IEEE 754 (`x / 0.0` is an infinity or NaN).
 
 <br>
 <hr>
@@ -316,7 +328,7 @@ Reinterprets the entry point as a function pointer of type `F` so the compiled c
 
 The caller guarantees all of:
 
-- `F` is a function-pointer type, hence pointer-sized. A non-function or differently-sized type is undefined behavior. (In debug builds a size mismatch is caught by an assertion.)
+- `F` is a function-pointer type, hence pointer-sized. A pointer-sized non-function type is undefined behavior. A differently-sized `F` does not compile: the size is checked by a compile-time assertion when `entry::<F>` is instantiated, in every build profile.
 - `F`'s signature matches the compiled function: one `extern "C"` argument per [`params`](#compiled) entry with the ABI type from the mapping table, and a return that matches [`ret`](#compiled). A mismatch is undefined behavior.
 - Every call through the returned pointer happens while `self` is alive. Once `self` is dropped the code is unmapped and the pointer dangles.
 

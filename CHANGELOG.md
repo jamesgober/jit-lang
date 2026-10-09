@@ -21,6 +21,28 @@
 
 ---
 
+## [1.0.1] - 2026-10-08
+
+A correctness patch: compiled integer division no longer kills the host process, the Windows ARM64 instruction-cache path now links, and `bool` crosses the ABI zero-extended. No public API change; a `cargo update` picks it up.
+
+### Fixed
+
+- **Integer division trapped in hardware and killed the process (ISSUES H10).** `BinOp::Div` on `int` lowered to a bare Cranelift `sdiv`, which traps on a zero divisor and on `i64::MIN / -1`: Cranelift's explicit zero check (`ud2`) raises SIGILL / `STATUS_ILLEGAL_INSTRUCTION`, and x86-64 `idiv` overflow raises SIGFPE / `STATUS_INTEGER_OVERFLOW` (on AArch64, whose `sdiv` does not fault, Cranelift emits explicit trap checks for both). Any caller passing those inputs crashed, and so did the IR it came from, although `ir-lang` validates it. Division is now total and never faults: `x / 0 == 0`, and `i64::MIN / -1 == i64::MIN` (two's-complement wrap, exactly `i64::wrapping_div`). Every other divisor is the same truncating division as before. The guard is branch-free (one range compare, a `select` of a safe divisor, and a `select` of `l * r` for the two special divisors), costs well under a nanosecond per call on x86-64, and folds away entirely for a constant divisor.
+  - **Why these values.** The `1.x` calling convention (`extern "C" fn(..) -> T`) has no channel for a runtime error, so neither case can be an error here. `MIN / -1 == MIN` matches the bytecode tier (codegen-lang's reference interpreter uses `wrapping_div`) and the wrap jit-lang already applies to `add`/`sub`/`mul`/`neg`. Division by zero is defined by neither ir-lang 1.0 nor the bytecode tier; `0` is the result AArch64's `sdiv` gives, and is now documented. The LexerSketch `OPS` defaults (`div_zero = error`, `overflow = error`) need an error return, which arrives with the native backend that replaces Cranelift (Phase 5), not in a `1.x` patch.
+  - Audited the other trapping Cranelift instructions (`srem`, `udiv`, `urem`, `fcvt_to_sint`, `fcvt_to_uint`, `trap*`, `uadd_overflow_trap`): ir-lang 1.0 has no op that lowers to any of them, and a unit test now fails if the translator ever emits a trapping instruction other than the guarded `sdiv`.
+  - `docs/API.md` said "Integer division by zero traps in hardware … the compiled code does not guard it"; it now documents the defined results under [Integer arithmetic](./docs/API.md#integer-arithmetic).
+- **Windows ARM64 referenced a symbol MSVC does not provide (ISSUES M55).** The AArch64 instruction-cache flush called the compiler-runtime `__clear_cache` on every non-macOS target, but MSVC's runtime has no such symbol, so a Windows ARM64 build could not link. Windows now calls `FlushInstructionCache(GetCurrentProcess(), ..)` from kernel32 through raw FFI (no new dependency), the same way pager-lang reaches `VirtualAlloc`. Verified with `cargo check --target aarch64-pc-windows-msvc` (stable and 1.94); not executed on Windows ARM64 hardware.
+- **`bool` parameters and returns were not declared zero-extended (ISSUES M56).** They were plain `I8` ABI slots, so the upper bits of a returned `bool` register were unspecified, while Rust's `bool` and C's `_Bool` are `zeroext`. They are now declared `uext`, so a `bool` return is a clean `0`/`1` in the full register and incoming `bool` arguments are treated as the zero-extended bytes callers pass.
+- **`Compiled::entry::<F>` checked `size_of::<F>()` only in debug builds (ISSUES M56).** The pointer-size check is now a compile-time assertion (`const { assert!(..) }`), evaluated when `entry::<F>` is instantiated, in every profile. Calling `entry` with a type that is not pointer-sized was already undefined behavior under the documented contract; it now fails to compile instead.
+
+### Added
+
+- `tests/division.rs`: divide-by-zero, `MIN / -1`, `MIN rem -1` (spelled `a - b * (a / b)`, since ir-lang 1.0 has no remainder op), every pair of nine edge values, constant and fully constant divisors, division inside a loop, float division by zero, and three property tests (single divide, composed remainder, random add/sub/mul/div/neg chains biased toward edge values). Every case runs natively in the test process and is compared with a reference interpreter (`tests/support`) replicated from codegen-lang's bytecode-tier oracle. Run against the 1.0.0 lowering, the test binary dies with `STATUS_INTEGER_OVERFLOW` / `STATUS_ILLEGAL_INSTRUCTION`.
+- Unit tests: the translated signature marks `bool` slots `uext`; no trapping instruction except the guarded `sdiv` is emitted for a function using every op. A workflow test passes `bool` arguments and reads a `bool` return. A `compile_fail` doctest shows `entry::<[u64; 2]>()` rejected.
+- Benchmark `call_guarded_div` (a runtime-divisor division per call).
+
+---
+
 ## [1.0.0] - 2026-06-30
 
 API freeze. The public surface is stable and frozen until `2.0`; the crate follows Semantic Versioning from this release. No breaking change to the `0.2.0` surface.
@@ -75,7 +97,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/jit-lang/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jamesgober/jit-lang/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/jamesgober/jit-lang/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jamesgober/jit-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/jit-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/jit-lang/releases/tag/v0.1.0

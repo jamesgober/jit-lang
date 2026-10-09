@@ -193,6 +193,35 @@ fn test_boolean_logic_runs() {
 }
 
 #[test]
+fn test_bool_parameters_and_return_cross_the_abi() {
+    // fn select(c: bool, d: bool, a: int, b: int) -> bool { !(c && d) || (a < b) }
+    // `bool` parameters come in as zero-extended bytes and the `bool` return goes out as
+    // one (`uext`), so a Rust `extern "C" fn(bool, ..) -> bool` reads a valid `bool`.
+    let mut b = Builder::new(
+        "nand_or_lt",
+        &[Type::Bool, Type::Bool, Type::Int, Type::Int],
+        Type::Bool,
+    );
+    let params = b.block_params(b.entry()).to_vec();
+    let both = b.bin(BinOp::And, params[0], params[1]);
+    let nand = b.un(UnOp::Not, both);
+    let lt = b.bin(BinOp::Lt, params[2], params[3]);
+    let out = b.bin(BinOp::Or, nand, lt);
+    b.ret(Some(out));
+
+    let f = compile(&b.finish()).expect("nand_or_lt is well-formed");
+    // SAFETY: the signature is `fn(bool, bool, int, int) -> bool` and `f` outlives every call.
+    let g: extern "C" fn(bool, bool, i64, i64) -> bool = unsafe { f.entry() };
+    for c in [false, true] {
+        for d in [false, true] {
+            for (x, y) in [(1, 2), (2, 1)] {
+                assert_eq!(g(c, d, x, y), !(c && d) || x < y, "{c} {d} {x} {y}");
+            }
+        }
+    }
+}
+
+#[test]
 fn test_integer_division_runs() {
     // fn half(x: int) -> int { x / 2 }
     let mut b = Builder::new("half", &[Type::Int], Type::Int);

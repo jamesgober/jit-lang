@@ -38,6 +38,15 @@
 //! convention, which is what Rust's `extern "C"` denotes, so the two agree when you
 //! call it.
 //!
+//! ## Integer arithmetic
+//!
+//! Compiled code never faults on any input. Integer `add`, `sub`, `mul`, and `neg` wrap
+//! in two's complement. Integer `div` truncates toward zero, and the two inputs a
+//! hardware divide traps on have defined results: `x / 0` is `0`, and
+//! `i64::MIN / -1` is `i64::MIN` (as [`i64::wrapping_div`]). The calling convention
+//! has no channel to report a runtime error, so neither is one. Float division is
+//! IEEE 754.
+//!
 //! ## Example
 //!
 //! Compile `fn sum_to(n: int) -> int { let mut acc = 0; while n > 0 { acc += n; n -= 1 } acc }`

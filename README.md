@@ -106,10 +106,12 @@ The IR's four machine types map onto the host C ABI:
 |---|---|---|
 | `int` | 64-bit integer | `i64` |
 | `float` | IEEE-754 double | `f64` |
-| `bool` | byte holding `0` or `1` | `bool` / `u8` |
+| `bool` | byte holding `0` or `1`, zero-extended | `bool` / `u8` |
 | `unit` (return) | no return value | `()` |
 
 A `unit`-typed **parameter** has no machine representation and is refused with [`JitError::Unsupported`](./docs/API.md#jiterror). The compiled function uses the host's C calling convention, which is exactly what Rust's `extern "C"` denotes, so the two agree when you call it.
+
+Integer arithmetic never faults: `add`/`sub`/`mul`/`neg` wrap, and `div` gives `x / 0 == 0` and `i64::MIN / -1 == i64::MIN` instead of the hardware trap that would kill the process. See [Integer arithmetic](./docs/API.md#integer-arithmetic).
 
 ### A branch and a loop
 
@@ -239,13 +241,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo bench --bench bench
 ```
 
-The integration suite in [`tests/workflow.rs`](./tests/workflow.rs) compiles representative functions — `double`, `abs`, `max`, a countdown loop, float arithmetic, boolean logic, integer division, and a unit function — to native code and **runs** them, checking the results the CPU produced. The property tests in [`tests/properties.rs`](./tests/properties.rs) generate random functions, run the compiled code, and compare each result to an independent evaluation in Rust.
+The integration suite in [`tests/workflow.rs`](./tests/workflow.rs) compiles representative functions — `double`, `abs`, `max`, a countdown loop, float arithmetic, boolean logic, integer division, and a unit function — to native code and **runs** them, checking the results the CPU produced. The property tests in [`tests/properties.rs`](./tests/properties.rs) generate random functions, run the compiled code, and compare each result to an independent evaluation in Rust. [`tests/division.rs`](./tests/division.rs) runs integer division on the inputs a hardware divide faults on (`x / 0`, `i64::MIN / -1`) natively in the test process and checks every result against a reference interpreter of the bytecode tier's semantics.
 
 <br>
 
 ## Cross-Platform Support
 
-Code generation targets the host through Cranelift, and executable memory is managed by pager-lang, so the supported targets are their intersection: **Linux**, **macOS**, and **Windows** on **x86-64** and **ARM64**. Freshly written code is made coherent before it runs — a no-op on x86-64, where the instruction and data caches are unified, and an instruction-cache synchronization on ARM64, where they are not. The CI matrix builds and tests on Linux, macOS, and Windows (macOS on ARM64, so the cache path is exercised) on stable and the 1.94 MSRV.
+Code generation targets the host through Cranelift, and executable memory is managed by pager-lang, so the supported targets are their intersection: **Linux**, **macOS**, and **Windows** on **x86-64** and **ARM64**. Freshly written code is made coherent before it runs — a no-op on x86-64, where the instruction and data caches are unified, and an instruction-cache synchronization on ARM64, where they are not. The CI matrix builds and tests on Linux, macOS, and Windows (macOS on ARM64, so the cache path is exercised) on stable and the 1.94 MSRV. Windows on ARM64 uses `FlushInstructionCache` (since 1.0.1; 1.0.0 referenced `__clear_cache`, which MSVC does not provide) and is cross-compile-checked, not run in CI.
 
 <br>
 

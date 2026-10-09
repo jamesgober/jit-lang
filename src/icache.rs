@@ -31,8 +31,10 @@ fn sync(_code: *const u8, _len: usize) {}
 /// AArch64 has split caches, so the instruction cache must be synchronized over the
 /// new code. macOS exposes the correct user-space primitive for this — the raw
 /// cache-maintenance instructions (`ic ivau` and friends) fault from user space on
-/// Apple silicon — while other systems provide the compiler runtime's `__clear_cache`,
-/// which the kernel emulates where those instructions are trapped.
+/// Apple silicon — and Windows exposes `FlushInstructionCache`; other systems provide
+/// the compiler runtime's `__clear_cache`, which the kernel emulates where those
+/// instructions are trapped. (MSVC's runtime has no `__clear_cache`, which is why
+/// Windows needs its own arm: the symbol would not link.)
 #[cfg(target_arch = "aarch64")]
 fn sync(code: *const u8, len: usize) {
     #[cfg(target_os = "macos")]
@@ -47,7 +49,35 @@ fn sync(code: *const u8, len: usize) {
         unsafe { sys_icache_invalidate(code.cast(), len) };
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        use core::ffi::c_void;
+
+        #[allow(
+            non_snake_case,
+            reason = "these are foreign Win32 symbols and must keep their exported names"
+        )]
+        unsafe extern "system" {
+            /// kernel32: the pseudo-handle for the calling process (always valid, never
+            /// closed).
+            fn GetCurrentProcess() -> *mut c_void;
+            /// kernel32: flush the instruction cache of `process` over
+            /// `[base, base + size)`. Returns nonzero on success.
+            fn FlushInstructionCache(process: *mut c_void, base: *const c_void, size: usize)
+            -> i32;
+        }
+        // SAFETY: `GetCurrentProcess` takes no arguments and returns a constant
+        // pseudo-handle for this process. `FlushInstructionCache` only performs cache
+        // maintenance over `[code, code + len)`, the just-written, now-executable code
+        // region this process owns; the handle, base pointer and length are all valid,
+        // which is its whole contract. kernel32 is always linked on Windows (as for
+        // pager-lang's `VirtualAlloc`).
+        // Failure is only possible for an invalid handle or range, neither of which can
+        // occur here, so the BOOL result carries no information worth acting on.
+        let _ = unsafe { FlushInstructionCache(GetCurrentProcess(), code.cast(), len) };
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         unsafe extern "C" {
             /// Compiler runtime: synchronize caches over the half-open range `[start, end)`.
