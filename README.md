@@ -18,7 +18,7 @@
 
 <div align="left">
     <p>
-        jit-lang is the CODE-tier crate: it lowers the <a href="https://docs.rs/ir-lang"><code>ir-lang</code></a> intermediate representation to native machine code via <a href="https://cranelift.dev">Cranelift</a>, places that code in executable memory, and hands back a callable function — so a front-end can run what it compiled, immediately. Part of the -lang language-construction family; see _strategy/LANG_COLLECTION.md for the master plan.
+        jit-lang is the CODE-tier crate: it lowers the <a href="https://docs.rs/ir-lang"><code>ir-lang</code></a> intermediate representation to native machine code via <a href="https://cranelift.dev">Cranelift</a>, places that code in executable memory, and hands back a callable function — so a front-end can run what it compiled, immediately. Part of the -lang language-construction family.
     </p>
     <br>
     <hr>
