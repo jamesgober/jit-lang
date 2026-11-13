@@ -21,6 +21,23 @@
 
 ---
 
+## [1.1.0] - 2026-11-12
+
+Large stack frames no longer crash the host, and compiled loops can now be stopped from another thread.
+
+### Fixed
+
+- **A function with a large stack frame could crash the process.** A function with many values live at once spills them to the stack, and its frame can be many pages deep. The prologue moved the stack pointer down by the whole frame and then stored into it without touching the pages in between, so the first store could land past the guard page. On Windows that was an access violation; elsewhere it could write into whatever was mapped below the thread's stack. Stack probes are now on, inline, so the prologue touches the frame one page at a time. Inline probes call no helper, so compiled code still needs no relocation.
+- The docs said compiled code "never faults on any input". That was only true of integer arithmetic, and the docs now say so. Running out of stack still ends the process, as it does for any native code.
+
+### Added
+
+- `Jit::compile_interruptible` and `Interrupt`. A function compiled this way checks a shared flag at the end of every loop iteration and returns the zero value of its return type once the flag is set, so a watchdog thread can stop a call that runs too long. `Interrupt::is_interrupted` tells an interrupted run from a real result. The check is one byte load and one branch per iteration, and `Jit::compile` is unchanged.
+- Docs on running untrusted IR: compiled code cannot be preempted without an interrupt flag, and compile time grows with function size.
+- Tests: `tests/stack.rs` runs a loop with 5,000 live values (a frame of about 40 KB) on a thread with a 1 MiB stack; before this release it crashed the test process on Windows. `tests/interrupt.rs` stops infinite and nested loops from another thread, checks the zero value for each return type, and checks that loop-free code ignores the flag.
+
+---
+
 ## [1.0.1] - 2026-10-08
 
 A correctness patch: compiled integer division no longer kills the host process, the Windows ARM64 instruction-cache path now links, and `bool` crosses the ABI zero-extended. No public API change; a `cargo update` picks it up.
@@ -97,7 +114,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/jit-lang/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/jamesgober/jit-lang/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jamesgober/jit-lang/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/jamesgober/jit-lang/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jamesgober/jit-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/jit-lang/compare/v0.1.0...v0.2.0

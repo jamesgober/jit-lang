@@ -15,7 +15,8 @@
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    AbiParam, BlockArg, Function as ClifFunction, InstBuilder, Signature, UserFuncName, types,
+    AbiParam, BlockArg, Function as ClifFunction, InstBuilder, MemFlagsData, Signature,
+    UserFuncName, types,
 };
 use cranelift_codegen::ir::{Block as ClifBlock, Value as ClifValue};
 use cranelift_codegen::isa::TargetIsa;
@@ -30,8 +31,23 @@ use crate::error::JitError;
 /// [`Function::validate`](ir_lang::Function::validate) first — so this routine relies
 /// on the SSA invariants that check guarantees and reports only what validation cannot
 /// catch: a [`Unit`](Type::Unit)-typed parameter, which has no machine representation.
-pub(crate) fn translate(func: &Function, isa: &dyn TargetIsa) -> Result<ClifFunction, JitError> {
+///
+/// With `interrupt` set to the address of a flag byte, every block that ends a loop
+/// iteration (one whose terminator has a retreating edge in the reverse postorder)
+/// first loads the flag, and returns the zero value of the return type if it is
+/// nonzero. Every cycle in the graph contains a retreating edge, so a set flag stops
+/// the function within one loop iteration.
+pub(crate) fn translate(
+    func: &Function,
+    isa: &dyn TargetIsa,
+    interrupt: Option<usize>,
+) -> Result<ClifFunction, JitError> {
     let order = reachable_rpo(func);
+    // Position of each reachable block in the order, to find retreating edges.
+    let mut position = vec![usize::MAX; func.block_count()];
+    for (i, &ir_block) in order.iter().enumerate() {
+        position[ir_block.index()] = i;
+    }
     let signature = signature(func, isa)?;
 
     let mut clif = ClifFunction::with_name_signature(UserFuncName::user(0, 0), signature);
@@ -71,6 +87,9 @@ pub(crate) fn translate(func: &Function, isa: &dyn TargetIsa) -> Result<ClifFunc
         }
     }
 
+    // The block an interrupted function leaves through, created on first use.
+    let mut bail: Option<ClifBlock> = None;
+
     // Fill each block: its instructions in program order, then its terminator.
     for &ir_block in &order {
         let block = clif_block(&blocks, ir_block)?;
@@ -84,12 +103,65 @@ pub(crate) fn translate(func: &Function, isa: &dyn TargetIsa) -> Result<ClifFunc
         let term = func
             .terminator(ir_block)
             .ok_or_else(|| internal("a reachable block has no terminator"))?;
+        if let Some(flag) = interrupt {
+            let here = position[ir_block.index()];
+            let mut retreats = false;
+            term.each_successor(|s| {
+                retreats |= position.get(s.index()).is_some_and(|&p| p <= here);
+            });
+            if retreats {
+                let exit = *bail.get_or_insert_with(|| builder.create_block());
+                emit_interrupt_check(&mut builder, isa, flag, exit);
+            }
+        }
         emit_terminator(&mut builder, term, &blocks, &values)?;
+    }
+
+    if let Some(exit) = bail {
+        builder.switch_to_block(exit);
+        emit_zero_return(&mut builder, func.ret());
     }
 
     builder.seal_all_blocks();
     builder.finalize();
     Ok(clif)
+}
+
+/// Loads the interrupt flag at `flag` and leaves for `exit` when it is set. Code after
+/// this call lands in a fresh block reached only when the flag is clear.
+///
+/// The load is atomic, so the code generator can neither hoist it out of the loop nor
+/// merge it with an earlier one; on x86-64 it is a plain byte load, and on ARM64 a
+/// load-acquire.
+fn emit_interrupt_check(
+    builder: &mut FunctionBuilder,
+    isa: &dyn TargetIsa,
+    flag: usize,
+    exit: ClifBlock,
+) {
+    // The address is a constant: the code runs where it was placed and is not
+    // position-independent, so no relocation is needed for it.
+    let addr = builder.ins().iconst(isa.pointer_type(), flag as i64);
+    let set = builder
+        .ins()
+        .atomic_load(types::I8, MemFlagsData::trusted(), addr);
+    let go_on = builder.create_block();
+    builder.ins().brif(set, exit, &[], go_on, &[]);
+    builder.switch_to_block(go_on);
+}
+
+/// Returns the zero value of `ret`: `0`, `0.0`, `false`, or nothing for `unit`.
+fn emit_zero_return(builder: &mut FunctionBuilder, ret: Type) {
+    let zero = match ret {
+        Type::Int => Some(builder.ins().iconst(types::I64, 0)),
+        Type::Float => Some(builder.ins().f64const(0.0)),
+        Type::Bool => Some(builder.ins().iconst(types::I8, 0)),
+        Type::Unit => None,
+    };
+    match zero {
+        Some(v) => builder.ins().return_(&[v]),
+        None => builder.ins().return_(&[]),
+    };
 }
 
 /// Builds the Cranelift signature from the IR function's parameter and return types,
@@ -414,7 +486,7 @@ mod tests {
         let sum = b.bin(BinOp::Add, x, x);
         b.ret(Some(sum));
         let isa = host_isa();
-        let clif = translate(&b.finish(), &*isa).expect("translates");
+        let clif = translate(&b.finish(), &*isa, None).expect("translates");
         assert_eq!(clif.signature.params.len(), 1);
         assert_eq!(clif.signature.returns.len(), 1);
         verify_function(&clif, &*isa).expect("the translated function is well-formed CLIF");
@@ -439,7 +511,7 @@ mod tests {
         let r = b.block_params(join)[0];
         b.ret(Some(r));
         let isa = host_isa();
-        let clif = translate(&b.finish(), &*isa).expect("translates");
+        let clif = translate(&b.finish(), &*isa, None).expect("translates");
         verify_function(&clif, &*isa).expect("the translated function is well-formed CLIF");
     }
 
@@ -450,7 +522,7 @@ mod tests {
         let a = b.block_params(b.entry())[0];
         b.ret(Some(a));
         let isa = host_isa();
-        let clif = translate(&b.finish(), &*isa).expect("translates");
+        let clif = translate(&b.finish(), &*isa, None).expect("translates");
         let sig = &clif.signature;
         assert_eq!(sig.params[0].extension, ArgumentExtension::Uext);
         assert_eq!(sig.params[1].extension, ArgumentExtension::None);
@@ -503,7 +575,7 @@ mod tests {
         // the float-to-int conversions are never emitted: ir-lang 1.0 has no op that
         // lowers to them.
         let isa = host_isa();
-        let clif = translate(&every_op(), &*isa).expect("translates");
+        let clif = translate(&every_op(), &*isa, None).expect("translates");
         verify_function(&clif, &*isa).expect("the translated function is well-formed CLIF");
         let mut divides = 0;
         for block in clif.layout.blocks() {
@@ -524,6 +596,52 @@ mod tests {
         assert_eq!(divides, 1, "exactly the one integer divide is emitted");
     }
 
+    /// Counts the atomic loads in a translated function: one per interrupt check.
+    fn interrupt_checks(clif: &cranelift_codegen::ir::Function) -> usize {
+        clif.layout
+            .blocks()
+            .flat_map(|block| clif.layout.block_insts(block))
+            .filter(|&inst| clif.dfg.insts[inst].opcode() == Opcode::AtomicLoad)
+            .count()
+    }
+
+    #[test]
+    fn test_interrupt_check_sits_only_on_loop_edges() {
+        // fn count(n: int) -> int { while n > 0 { n -= 1 } n }, plus a diamond after it.
+        let mut b = Builder::new("count", &[Type::Int], Type::Int);
+        let n0 = b.block_params(b.entry())[0];
+        let header = b.create_block(&[Type::Int]);
+        let body = b.create_block(&[]);
+        let exit = b.create_block(&[]);
+        b.jump(header, &[n0]);
+        b.switch_to(header);
+        let n = b.block_params(header)[0];
+        let zero = b.iconst(0);
+        let more = b.bin(BinOp::Gt, n, zero);
+        b.branch(more, body, &[], exit, &[]);
+        b.switch_to(body);
+        let one = b.iconst(1);
+        let n2 = b.bin(BinOp::Sub, n, one);
+        b.jump(header, &[n2]);
+        b.switch_to(exit);
+        b.ret(Some(n));
+        let func = b.finish();
+
+        let isa = host_isa();
+        let plain = translate(&func, &*isa, None).expect("translates");
+        verify_function(&plain, &*isa).expect("well-formed CLIF");
+        assert_eq!(interrupt_checks(&plain), 0);
+
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        let checked = translate(&func, &*isa, Some(flag.as_ptr() as usize)).expect("translates");
+        verify_function(&checked, &*isa).expect("well-formed CLIF");
+        assert_eq!(interrupt_checks(&checked), 1, "one back edge, one check");
+
+        // Straight-line code gets no check at all.
+        let checked = translate(&every_op(), &*isa, Some(flag.as_ptr() as usize)).unwrap();
+        assert_eq!(interrupt_checks(&checked), 0);
+    }
+
     #[test]
     fn test_unit_parameter_is_unsupported() {
         // A unit-typed parameter has no machine representation.
@@ -531,7 +649,7 @@ mod tests {
         b.ret(None);
         let isa = host_isa();
         assert!(matches!(
-            translate(&b.finish(), &*isa),
+            translate(&b.finish(), &*isa, None),
             Err(JitError::Unsupported(_))
         ));
     }

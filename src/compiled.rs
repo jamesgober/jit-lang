@@ -6,6 +6,8 @@ use std::mem;
 use ir_lang::Type;
 use pager_lang::Region;
 
+use crate::interrupt::Interrupt;
+
 /// A compiled function: native machine code living in executable memory, ready to run.
 ///
 /// A [`Jit`](crate::Jit) produces one of these by lowering an
@@ -58,6 +60,9 @@ pub struct Compiled {
     /// The length of the emitted machine code in bytes (`<=` the region length, which
     /// is rounded up to whole pages).
     code_len: usize,
+    /// The flag the code checks at each loop iteration, when it was compiled with one.
+    /// Held so the flag's address, baked into the code, stays valid while it can run.
+    interrupt: Option<Interrupt>,
 }
 
 impl Compiled {
@@ -69,6 +74,7 @@ impl Compiled {
         params: Vec<Type>,
         ret: Type,
         code_len: usize,
+        interrupt: Option<Interrupt>,
     ) -> Self {
         Self {
             region,
@@ -76,6 +82,7 @@ impl Compiled {
             params,
             ret,
             code_len,
+            interrupt,
         }
     }
 
@@ -286,6 +293,7 @@ impl std::fmt::Debug for Compiled {
             .field("params", &self.params)
             .field("ret", &self.ret)
             .field("code_len", &self.code_len)
+            .field("interruptible", &self.interrupt.is_some())
             .field("entry", &self.as_ptr())
             .finish()
     }
