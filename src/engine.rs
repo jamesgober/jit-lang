@@ -11,6 +11,7 @@ use pager_lang::{Protection, Region};
 
 use crate::compiled::Compiled;
 use crate::error::JitError;
+use crate::interrupt::Interrupt;
 use crate::{icache, translate};
 
 /// A just-in-time compiler for the host machine.
@@ -88,6 +89,13 @@ impl Jit {
         // The code runs at the fixed address of its own region, so position-independent
         // addressing buys nothing and only adds indirection.
         set_flag(&mut flags, "is_pic", "false")?;
+        // A function with many values live at once spills them, and its frame can be
+        // many pages deep. The prologue must touch the stack a page at a time, or the
+        // first store into the frame skips the guard page: an access violation on
+        // Windows, and a store into whatever is mapped below the stack elsewhere.
+        // Inline probes need no helper symbol, so the code stays free of relocations.
+        set_flag(&mut flags, "enable_probestack", "true")?;
+        set_flag(&mut flags, "probestack_strategy", "inline")?;
         let flags = settings::Flags::new(flags);
 
         let isa = cranelift_native::builder()
@@ -134,8 +142,67 @@ impl Jit {
     /// assert_eq!(mul_fn(6, 7), 42);
     /// ```
     pub fn compile(&self, func: &Function) -> Result<Compiled, JitError> {
+        self.compile_with(func, None)
+    }
+
+    /// Compiles a function that stops when `interrupt` is set.
+    ///
+    /// This is [`compile`](Self::compile) plus one check at the end of every loop
+    /// iteration: the code loads the flag, and if it is set the function returns at
+    /// once with the zero value of its return type (`0`, `0.0`, `false`, or nothing for
+    /// `unit`). Set the flag from another thread to stop a call that runs too long,
+    /// then check [`Interrupt::is_interrupted`] after the call returns to tell an
+    /// interrupted run from a real result. Code with no loop runs straight through and
+    /// never checks the flag.
+    ///
+    /// Use this for IR you do not trust to terminate. The check costs one byte load and
+    /// one branch per loop iteration. The returned [`Compiled`] keeps the flag alive.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`compile`](Self::compile).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use jit_lang::{Interrupt, Jit};
+    /// use ir_lang::{Builder, Type};
+    ///
+    /// // fn spin() -> int { loop {} }
+    /// let mut b = Builder::new("spin", &[], Type::Int);
+    /// let top = b.create_block(&[]);
+    /// b.jump(top, &[]);
+    /// b.switch_to(top);
+    /// b.jump(top, &[]);
+    ///
+    /// let interrupt = Interrupt::new();
+    /// let spin = Jit::new()
+    ///     .unwrap()
+    ///     .compile_interruptible(&b.finish(), &interrupt)
+    ///     .unwrap();
+    ///
+    /// // With the flag already set, the loop stops on its first iteration.
+    /// interrupt.interrupt();
+    /// // SAFETY: the signature is `fn() -> int`, and `spin` outlives the call.
+    /// let spin_fn: extern "C" fn() -> i64 = unsafe { spin.entry() };
+    /// assert_eq!(spin_fn(), 0);
+    /// ```
+    pub fn compile_interruptible(
+        &self,
+        func: &Function,
+        interrupt: &Interrupt,
+    ) -> Result<Compiled, JitError> {
+        self.compile_with(func, Some(interrupt))
+    }
+
+    /// The shared compile path, with or without an interrupt check.
+    fn compile_with(
+        &self,
+        func: &Function,
+        interrupt: Option<&Interrupt>,
+    ) -> Result<Compiled, JitError> {
         func.validate()?;
-        let clif = translate::translate(func, &*self.isa)?;
+        let clif = translate::translate(func, &*self.isa, interrupt.map(Interrupt::address))?;
 
         let mut context = Context::for_function(clif);
         let code = context
@@ -156,6 +223,7 @@ impl Jit {
             func.params().to_vec(),
             func.ret(),
             bytes.len(),
+            interrupt.cloned(),
         ))
     }
 }

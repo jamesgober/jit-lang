@@ -40,12 +40,26 @@
 //!
 //! ## Integer arithmetic
 //!
-//! Compiled code never faults on any input. Integer `add`, `sub`, `mul`, and `neg` wrap
+//! Integer arithmetic never faults on any input. Integer `add`, `sub`, `mul`, and `neg` wrap
 //! in two's complement. Integer `div` truncates toward zero, and the two inputs a
 //! hardware divide traps on have defined results: `x / 0` is `0`, and
 //! `i64::MIN / -1` is `i64::MIN` (as [`i64::wrapping_div`]). The calling convention
 //! has no channel to report a runtime error, so neither is one. Float division is
 //! IEEE 754.
+//!
+//! ## Stack and running time
+//!
+//! Each function's prologue touches its stack frame one page at a time, so a function
+//! with a frame many pages deep grows the stack in order and reaches the guard page
+//! instead of skipping past it. Running out of stack still ends the process, as it does
+//! for any native code, so give a thread that runs compiled code enough stack.
+//!
+//! Compiled code cannot be preempted. A function from [`Jit::compile`] runs until it
+//! returns, so a loop that never ends holds its thread for good. For IR you do not
+//! trust to terminate, compile with [`Jit::compile_interruptible`] and set its
+//! [`Interrupt`] from another thread to stop the call. Compile time and memory grow
+//! with the size of the function and are not capped here, so a host that accepts
+//! untrusted IR should cap function size before compiling.
 //!
 //! ## Example
 //!
@@ -135,8 +149,10 @@ mod compiled;
 mod engine;
 mod error;
 mod icache;
+mod interrupt;
 mod translate;
 
 pub use compiled::Compiled;
 pub use engine::{Jit, compile};
 pub use error::JitError;
+pub use interrupt::Interrupt;

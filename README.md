@@ -163,7 +163,12 @@ For a complete reference with examples, see [`docs/API.md`](./docs/API.md).
 - [`Jit::new`](./docs/API.md#jitnew) / [`Jit::compile`](./docs/API.md#jitcompile) — build the engine, then compile a function to runnable code.
 - [`compile`](./docs/API.md#compile) — the one-call shortcut: build an engine and compile a single function.
 - [`Compiled`](./docs/API.md#compiled) — the result: native code in executable memory, with [`name`](./docs/API.md#compiled), [`params`](./docs/API.md#compiled), [`ret`](./docs/API.md#compiled), [`code_len`](./docs/API.md#compiled), [`as_ptr`](./docs/API.md#compiled), and the `unsafe` [`entry`](./docs/API.md#compiledentry).
+- [`Jit::compile_interruptible`](./docs/API.md#jitcompile_interruptible) and [`Interrupt`](./docs/API.md#interrupt): compile a function that stops at its next loop iteration once a shared flag is set.
 - [`JitError`](./docs/API.md#jiterror) — the reason a compile failed: invalid IR, an unsupported feature or host, a code-generation failure, or executable memory being unavailable.
+
+### Untrusted IR
+
+Every function's prologue touches its stack frame a page at a time, so a function with a large frame reaches the guard page in order instead of skipping past it. Compiled code cannot be preempted, though: a loop that never ends holds its thread. For IR you do not trust to terminate, compile with [`Jit::compile_interruptible`](./docs/API.md#jitcompile_interruptible) and set the [`Interrupt`](./docs/API.md#interrupt) from a watchdog thread. Compile time grows with function size and is not capped here, so cap the size of untrusted functions before compiling.
 
 ### Safety
 

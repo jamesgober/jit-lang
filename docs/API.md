@@ -26,13 +26,16 @@ jit-lang lowers the [`ir-lang`](https://docs.rs/ir-lang) intermediate representa
 - [How it works](#how-it-works)
   - [Type and ABI mapping](#type-and-abi-mapping)
   - [Integer arithmetic](#integer-arithmetic)
+  - [Stack and running time](#stack-and-running-time)
 - [Public API](#public-api)
   - [`Jit`](#jit)
   - [`Jit::new`](#jitnew)
   - [`Jit::compile`](#jitcompile)
+  - [`Jit::compile_interruptible`](#jitcompile_interruptible)
   - [`compile`](#compile)
   - [`Compiled`](#compiled)
   - [`Compiled::entry`](#compiledentry)
+  - [`Interrupt`](#interrupt)
   - [`JitError`](#jiterror)
 - [Feature flags](#feature-flags)
 - [SemVer promise](#semver-promise)
@@ -82,7 +85,7 @@ A `unit`-typed **parameter** has no machine representation and is refused with [
 
 ### Integer arithmetic
 
-Integer arithmetic is total: no compiled function faults on any input. `add`, `sub`, `mul`, and `neg` wrap in two's complement. `div` truncates toward zero, and its two cases a hardware divide would trap on have defined results:
+Integer arithmetic is total: no integer operation faults on any input. `add`, `sub`, `mul`, and `neg` wrap in two's complement. `div` truncates toward zero, and its two cases a hardware divide would trap on have defined results:
 
 | Case | Result |
 |---|---|
@@ -90,6 +93,12 @@ Integer arithmetic is total: no compiled function faults on any input. `add`, `s
 | `i64::MIN / -1` | `i64::MIN` (wraps, as `i64::wrapping_div`) |
 
 `MIN / -1` matches the bytecode tier (codegen-lang's reference interpreter uses `wrapping_div`). Division by zero is not defined by ir-lang 1.0 or the bytecode tier; jit-lang defines it as `0`, the value AArch64's `sdiv` produces. The `1.x` calling convention has no way to return a runtime error, so neither case can be reported as one; erroring semantics (the LexerSketch `OPS` policy defaults) arrive with the native backend that replaces this crate's code generator. Float division follows IEEE 754 (`x / 0.0` is an infinity or NaN).
+
+### Stack and running time
+
+Each function's prologue touches its stack frame one page at a time (inline stack probes), so a function whose frame is many pages deep grows the stack in order and reaches the guard page instead of skipping past it. Before `1.1.0` a large frame could skip the guard page, which crashed the process on Windows. Running out of stack still ends the process, as it does for any native code, so give a thread that runs compiled code enough stack.
+
+Compiled code cannot be preempted. A function from [`Jit::compile`](#jitcompile) runs until it returns, so a loop that never ends holds its thread for good. For IR you do not trust to terminate, compile with [`Jit::compile_interruptible`](#jitcompile_interruptible) and set its [`Interrupt`](#interrupt) from another thread. Compile time and memory grow with the size of the function and are not capped here, so a host that accepts untrusted IR should cap function size before compiling.
 
 <br>
 <hr>
@@ -215,6 +224,63 @@ for k in 0..4_i64 {
     let add_k: extern "C" fn(i64) -> i64 = unsafe { f.entry() };
     assert_eq!(add_k(100), 100 + k);
 }
+```
+
+<br>
+
+### `Jit::compile_interruptible`
+
+```rust
+pub fn compile_interruptible(
+    &self,
+    func: &ir_lang::Function,
+    interrupt: &Interrupt,
+) -> Result<Compiled, JitError>
+```
+
+*Since 1.1.0.* Compiles a function that stops when `interrupt` is set. This is [`Jit::compile`](#jitcompile) plus one check at the end of every loop iteration: the code loads the flag, and if it is set the function returns at once with the zero value of its return type (`0`, `0.0`, `false`, or nothing for `unit`). Set the flag from another thread to stop a call that runs too long, then check [`Interrupt::is_interrupted`](#interrupt) after the call returns to tell an interrupted run from a real result. Code with no loop runs straight through and never checks the flag.
+
+Use this for IR you do not trust to terminate. The check costs one byte load and one branch per loop iteration. The returned [`Compiled`](#compiled) keeps the flag alive.
+
+**Parameters**
+
+- `func`: the function to compile, as for [`Jit::compile`](#jitcompile).
+- `interrupt`: the flag the compiled code checks.
+
+**Returns**
+
+The same as [`Jit::compile`](#jitcompile).
+
+**Examples**
+
+```rust
+use jit_lang::{Interrupt, Jit};
+use ir_lang::{Builder, Type};
+
+// fn spin() -> int { loop {} }
+let mut b = Builder::new("spin", &[], Type::Int);
+let top = b.create_block(&[]);
+b.jump(top, &[]);
+b.switch_to(top);
+b.jump(top, &[]);
+
+let interrupt = Interrupt::new();
+let spin = Jit::new()
+    .unwrap()
+    .compile_interruptible(&b.finish(), &interrupt)
+    .unwrap();
+
+let watchdog = interrupt.clone();
+let timer = std::thread::spawn(move || {
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    watchdog.interrupt();
+});
+
+// SAFETY: the signature is `fn() -> int`, and `spin` outlives the call.
+let spin_fn: extern "C" fn() -> i64 = unsafe { spin.entry() };
+assert_eq!(spin_fn(), 0);
+assert!(interrupt.is_interrupted());
+timer.join().unwrap();
 ```
 
 <br>
@@ -390,6 +456,29 @@ let f = compile(&b.finish()).unwrap();
 let add: extern "C" fn(f64, f64) -> f64 = unsafe { f.entry() };
 assert_eq!(add(1.5, 2.5), 4.0);
 ```
+
+<br>
+
+### `Interrupt`
+
+```rust
+#[derive(Clone, Default)]
+pub struct Interrupt { /* private fields */ }
+
+impl Interrupt {
+    pub fn new() -> Interrupt;
+    pub fn interrupt(&self);
+    pub fn clear(&self);
+    pub fn is_interrupted(&self) -> bool;
+}
+```
+
+*Since 1.1.0.* A flag that stops compiled code at its next loop iteration. A function compiled with [`Jit::compile_interruptible`](#jitcompile_interruptible) reads it at the end of every loop iteration and, once it is set, returns the zero value of its return type. Clones share one flag, so one clone can go to a watchdog thread. The flag stays set until `clear`, and while it is set every function compiled against it returns at its first loop iteration. `Interrupt` is [`Send`] and [`Sync`].
+
+- `new`: a flag that is not set.
+- `interrupt`: sets the flag; running calls on any thread return at their next loop iteration.
+- `clear`: clears the flag so compiled code runs normally again.
+- `is_interrupted`: whether the flag is set. After a call returns, `true` means the value may be the zero value from an interrupted run.
 
 <br>
 
