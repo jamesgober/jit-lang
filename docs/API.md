@@ -92,7 +92,7 @@ Integer arithmetic is total: no integer operation faults on any input. `add`, `s
 | `x / 0` (any `x`) | `0` |
 | `i64::MIN / -1` | `i64::MIN` (wraps, as `i64::wrapping_div`) |
 
-`MIN / -1` matches the bytecode tier (codegen-lang's reference interpreter uses `wrapping_div`). Division by zero is not defined by ir-lang 1.0 or the bytecode tier; jit-lang defines it as `0`, the value AArch64's `sdiv` produces. The `1.x` calling convention has no way to return a runtime error, so neither case can be reported as one; erroring semantics (the LexerSketch `OPS` policy defaults) arrive with the native backend that replaces this crate's code generator. Float division follows IEEE 754 (`x / 0.0` is an infinity or NaN).
+`MIN / -1` matches the bytecode tier (codegen-lang's reference interpreter uses `wrapping_div`). Division by zero is not defined by ir-lang 1.0 or the bytecode tier; jit-lang defines it as `0`, the value AArch64's `sdiv` produces. The `1.x` calling convention has no way to return a runtime error, so neither case can be reported as one; erroring semantics (the toolchain's `OPS` policy defaults) arrive with the native backend that replaces this crate's code generator. Float division follows IEEE 754 (`x / 0.0` is an infinity or NaN).
 
 ### Stack and running time
 

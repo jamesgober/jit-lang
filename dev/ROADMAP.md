@@ -39,7 +39,7 @@ already coherent). Additive 1.x room: function calls, wider machine types, and m
 back-ends or optimization levels — each a minor release when it lands.
 
 ## v1.0.1 - Patch: non-trapping division, Windows ARM64 i-cache, bool ABI (DONE, 2026-10-08)
-Fixes ISSUES **H10**, **M55**, and **M56** from `_lexersketch/ISSUES.md`. No public API
+Fixes ISSUES **H10**, **M55**, and **M56** from the issue ledger. No public API
 change.
 
 Delivered:
@@ -59,13 +59,13 @@ Delivered:
 
 Semantics decision (recorded per the anti-deferral rule): the frozen `1.x` calling
 convention (`extern "C" fn(..) -> T`) has no runtime-error channel, so the `OPS` defaults
-(`div_zero = error`, `overflow = error`, `_lexersketch/specs/OPS.md`) cannot be honored in
+(`div_zero = error`, `overflow = error`, the OPS specification) cannot be honored in
 `1.x`. jit-lang 1.x matches the bytecode tier instead (wrapping integer arithmetic,
 `MIN / -1 == MIN` as `wrapping_div`) and defines `x / 0 == 0`, which neither ir-lang 1.0
 nor the bytecode tier defines (ISSUES M44). Erroring semantics move to jit-lang 2.0.
 
 Dependency wiring: unchanged (`ir-lang = "1"`, `pager-lang = "1"`, Cranelift 0.133).
 The Cranelift dependency itself (ISSUES M57) is not a patch-level change: it is removed in
-**Phase 5** of the LexerSketch roadmap (step 5.6, jit-lang 2.0: our native backend into
+**Phase 5** of the toolchain's roadmap (step 5.6, jit-lang 2.0: our native backend into
 pager-lang, a code arena instead of one guarded region per function, and an error return
 for OPS-conformant division and overflow).
